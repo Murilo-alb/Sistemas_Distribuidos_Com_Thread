@@ -5,86 +5,78 @@ import java.util.Map;
 
 public class BancoDeDados {
     
-    // Armazenamento em memória utilizando o login (usuario) como chave
-    private Map<String, Perfil> usuarios;
+    // Como não há threads concorrendo, o HashMap comum é perfeito e mais rápido!
+    // Ele guarda o formato: "login_do_usuario" -> Objeto Perfil
+    private Map<String, Perfil> usuarios = new HashMap<>();
 
     public BancoDeDados() {
-        this.usuarios = new HashMap<>();
-        // RNF05: O Admin é inicializado com o token fixo "adm"
-        // Formato: nome, senha, token, nivel
-        usuarios.put("admin", new Perfil("Administrador", "123456", "adm", "ADMIN"));
+        // Contas pré-cadastradas para você não perder tempo digitando na apresentação
+        usuarios.put("admin", new Perfil("Administrador", "admin", "123456", "ADMIN"));
     }
 
-    // --- MÉTODOS DO CRUD ---
+    // --- MÉTODOS DO CRUD (Sem o 'synchronized' porque não tem concorrência) ---
 
-    /**
-     * RF03 / Imagem 1: Cadastro de utilizador
-     * @return true se o utilizador foi criado, false se o login já existir
-     */
     public boolean cadastrarUsuario(String nome, String usuario, String senha) {
         if (usuarios.containsKey(usuario)) {
-            return false;
-        }
-        // Utilizadores novos começam sem token (gerado apenas no login)
-        usuarios.put(usuario, new Perfil(nome, senha, "NENHUM", "USUARIO"));
-        return true;
-    }
-
-    /**
-     * RF01 / RNF07: Autenticação e geração de token
-     */
-    public Perfil fazerLogin(String usuario, String senha) {
-        if (usuarios.containsKey(usuario)) {
-            Perfil perfil = usuarios.get(usuario);
-            
-            if (perfil.getSenha().equals(senha)) {
-                // RNF07: Gera o token no formato usr_nomeusuario para utilizadores comuns
-                if (perfil.getNivel().equals("USUARIO")) {
-                    perfil.setToken("usr_" + usuario);
-                }
-                return perfil;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Imagem 1: Atualização de dados (Nome e Senha)
-     */
-    public boolean atualizarUsuario(String usuario, String novoNome, String novaSenha) {
-        if (usuarios.containsKey(usuario)) {
-            Perfil p = usuarios.get(usuario);
-            p.setNome(novoNome);
-            p.setSenha(novaSenha);
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * RF03: Eliminação de utilizador (Impede eliminar o admin)
-     */
-    public boolean apagarUsuario(String usuario) {
-        if (usuario.equalsIgnoreCase("admin")) {
             return false; 
         }
-        return usuarios.remove(usuario) != null;
+        Perfil novo = new Perfil(nome, usuario, senha, "USER");
+        
+        // REGRA DO TOKEN NO CADASTRO:
+        novo.setToken("usr_" + usuario); 
+        
+        usuarios.put(usuario, novo);
+        return true;
+    }
+    public Perfil fazerLogin(String usuario, String senha) {
+        Perfil p = usuarios.get(usuario);
+        
+        if (p != null && p.getSenha().equals(senha)) {
+            // REGRA DE TOKENS QUE VOCÊ PEDIU:
+            if (p.getNivel().equals("ADMIN")) {
+                p.setToken("adm"); // Se for admin, o token é fixo "adm"
+            } else {
+                p.setToken("usr_" + p.getUsuario()); // Se for user, é "usr_usuario"
+            }
+            return p;
+        }
+        return null; 
+    }
+    public String buscarUsuarioPorToken(String token) {
+        if (token == null || token.isEmpty()) return null;
+        
+        for (Perfil p : usuarios.values()) {
+            if (token.equals(p.getToken())) {
+                return p.getUsuario();
+            }
+        }
+        return null; // Token inválido ou expirado
     }
 
     public Perfil buscarPerfil(String usuario) {
         return usuarios.get(usuario);
     }
 
-    /**
-     * Método auxiliar essencial para localizar o utilizador através do token 
-     * enviado pelo cliente nas operações de Update, Delete e Read.
-     */
-    public String buscarUsuarioPorToken(String token) {
-        for (Map.Entry<String, Perfil> entry : usuarios.entrySet()) {
-            if (entry.getValue().getToken().equals(token)) {
-                return entry.getKey(); // Retorna o login do dono do token
-            }
+    public void atualizarUsuario(String usuario, String novoNome, String novaSenha) {
+        Perfil p = usuarios.get(usuario);
+        if (p != null) {
+            p.setNome(novoNome);
+            p.setSenha(novaSenha);
         }
-        return null;
+    }
+
+    public boolean apagarUsuario(String loginAlvo) {
+        // O loginAlvo deve ser exatamente o "usuario" (ex: murilo), não o nome completo.
+        Perfil p = usuarios.get(loginAlvo);
+        
+        if (p != null) {
+            // Regra de segurança: Não permite apagar utilizadores de nível ADMIN
+            if (p.getNivel().equals("ADMIN")) {
+                return false; 
+            }
+            usuarios.remove(loginAlvo);
+            return true;
+        }
+        return false; // Utilizador não encontrado
     }
 }

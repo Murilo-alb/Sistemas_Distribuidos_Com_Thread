@@ -5,65 +5,47 @@ import java.awt.*;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.net.SocketException;
-import java.util.ArrayList;
-import java.util.List;
 
 public class ServidorGUI extends JFrame {
 
-    // --- INTERFACE GRÁFICA ---
     private JTextField txtPorta;
-    private JButton btnIniciar;
-    private JButton btnParar;
-    private JTextArea areaLog;
-
-    // --- REDE E BANCO DE DADOS ---
+    private JButton btnIniciar, btnDesligar;
+    private JTextArea areaMonitoramento;
+    
     private ServerSocket serverSocket;
     private boolean rodando = false;
-    private BancoDeDados banco; 
-    
-    // --- LISTA DE CLIENTES (Para evitar os "Sockets Zumbis") ---
-    private List<Socket> clientesAtivos = new ArrayList<>();
+    private BancoDeDados banco;
 
     public ServidorGUI() {
-        setTitle("Servidor Profissional MVC - Entrega 1");
-        setSize(600, 450);
+        banco = new BancoDeDados(); 
+        
+        setTitle("Servidor SINGLE-THREAD (Fila Estrita)");
+        setSize(700, 450);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout(10, 10));
 
-        // Inicializa o nosso Banco de Dados
-        banco = new BancoDeDados();
-
-        // --- PAINEL TOPO ---
-        JPanel painelTopo = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 10));
+        JPanel painelTopo = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 10));
         painelTopo.add(new JLabel("Porta do Servidor:"));
         txtPorta = new JTextField("12345", 8);
         painelTopo.add(txtPorta);
-
+        
         btnIniciar = new JButton("Iniciar Servidor");
-        btnParar = new JButton("Desligar");
-        btnParar.setEnabled(false);
-
+        btnDesligar = new JButton("Desligar");
+        btnDesligar.setEnabled(false);
+        
         painelTopo.add(btnIniciar);
-        painelTopo.add(btnParar);
+        painelTopo.add(btnDesligar);
         add(painelTopo, BorderLayout.NORTH);
 
-        // --- PAINEL CENTRO ---
-        areaLog = new JTextArea();
-        areaLog.setEditable(false);
-        areaLog.setBackground(new Color(230, 245, 255)); 
-        areaLog.setLineWrap(true);
-        areaLog.setWrapStyleWord(true);
+        areaMonitoramento = new JTextArea();
+        areaMonitoramento.setEditable(false);
+        areaMonitoramento.setFont(new Font("Monospaced", Font.PLAIN, 12));
+        JScrollPane scroll = new JScrollPane(areaMonitoramento);
+        scroll.setBorder(BorderFactory.createTitledBorder("Log de Rede (Monitoramento)"));
+        add(scroll, BorderLayout.CENTER);
 
-        JScrollPane scrollLog = new JScrollPane(areaLog);
-        scrollLog.setBorder(BorderFactory.createTitledBorder("Monitoramento do Servidor"));
-        add(scrollLog, BorderLayout.CENTER);
-
-        // --- EVENTOS ---
         btnIniciar.addActionListener(e -> iniciarServidor());
-        btnParar.addActionListener(e -> pararServidor());
-
-        logSistema("SUCESSO: Sistema iniciado. Banco de Dados carregado.");
+        btnDesligar.addActionListener(e -> desligarServidor());
     }
 
     private void iniciarServidor() {
@@ -71,78 +53,71 @@ public class ServidorGUI extends JFrame {
         try {
             porta = Integer.parseInt(txtPorta.getText());
         } catch (NumberFormatException e) {
-            logSistema("ERRO: Porta inválida.");
+            log("ERRO: Porta inválida.");
             return;
         }
 
+        rodando = true;
+        btnIniciar.setEnabled(false);
+        btnDesligar.setEnabled(true);
+        txtPorta.setEnabled(false);
+
+        // A MÁGICA AQUI: Criamos UMA ÚNICA thread de fundo só para a rede.
+        // Assim a tela não trava, mas a rede continua sendo "um atendente só".
         new Thread(() -> {
             try {
                 serverSocket = new ServerSocket(porta);
-                rodando = true;
-
-                SwingUtilities.invokeLater(() -> {
-                    btnIniciar.setEnabled(false);
-                    txtPorta.setEnabled(false);
-                    btnParar.setEnabled(true);
-                    logSistema("Servidor INICIADO na porta " + porta + ". Aguardando clientes...");
-                });
+                log("SUCESSO: Banco de Dados carregado na RAM.");
+                log("Servidor rodando na porta " + porta + ". Operando em FILA ESTRITA.");
 
                 while (rodando) {
+                    log("\n[ CAIXA LIVRE ] Aguardando próximo cliente...");
+                    
+                    // 1. O "atendente" fica parado aqui esperando alguém entrar
                     Socket socketCliente = serverSocket.accept();
+                    log("NOVO CLIENTE: " + socketCliente.getInetAddress().getHostAddress() + " conectou.");
                     
-                    // 1. Adiciona o novo cliente na nossa lista de ativos
-                    clientesAtivos.add(socketCliente);
+                    // 2. Prepara o atendimento
+                    TratadorCliente tratador = new TratadorCliente(socketCliente, banco, this::log);
                     
-                    logSistema("NOVO CLIENTE: " + socketCliente.getInetAddress().getHostAddress() + " conectou.");
+                    // 3. ATENDIMENTO BLOQUEANTE (Síncrono)
+                    // Ele entra no processar() e NÃO SAI MAIS até o cliente dar Logout ou fechar!
+                    tratador.processar(); 
                     
-                    // Passamos o cliente para o Tratador
-                    new Thread(new TratadorCliente(socketCliente, banco, this::logSistema)).start();
+                    log("Cliente encerrou a conexão. Fila andou!");
                 }
-
-            } catch (SocketException se) {
-                logSistema("Servidor DESLIGADO.");
             } catch (IOException e) {
-                logSistema("ERRO CRÍTICO: " + e.getMessage());
+                if (rodando) {
+                    log("ERRO no servidor: " + e.getMessage());
+                }
             }
         }).start();
     }
 
-    private void pararServidor() {
+    private void desligarServidor() {
         rodando = false;
         try {
-            // 1. Fecha a porta principal do servidor (impede conexões novas)
             if (serverSocket != null && !serverSocket.isClosed()) {
                 serverSocket.close();
             }
-            
-            // 2. Derruba ativamente todos os clientes que já estavam dentro
-            for (Socket cliente : clientesAtivos) {
-                if (cliente != null && !cliente.isClosed()) {
-                    cliente.close(); // Corta a conexão à força
-                }
-            }
-            
-            // 3. Limpa a lista, pois todos foram expulsos
-            clientesAtivos.clear();
-            
-            btnIniciar.setEnabled(true);
-            txtPorta.setEnabled(true);
-            btnParar.setEnabled(false);
+            log("Servidor DESLIGADO.");
         } catch (IOException e) {
-            logSistema("Erro ao parar servidor: " + e.getMessage());
+            log("Erro ao desligar: " + e.getMessage());
         }
+        btnIniciar.setEnabled(true);
+        btnDesligar.setEnabled(false);
+        txtPorta.setEnabled(true);
     }
 
-    private void logSistema(String mensagem) {
+    public void log(String mensagem) {
         SwingUtilities.invokeLater(() -> {
-            areaLog.append(mensagem + "\n");
-            areaLog.setCaretPosition(areaLog.getDocument().getLength());
+            areaMonitoramento.append(mensagem + "\n");
+            areaMonitoramento.setCaretPosition(areaMonitoramento.getDocument().getLength());
         });
     }
 
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> {
-            new ServidorGUI().setVisible(true);
-        });
+        try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); } catch (Exception e) {}
+        SwingUtilities.invokeLater(() -> new ServidorGUI().setVisible(true));
     }
 }

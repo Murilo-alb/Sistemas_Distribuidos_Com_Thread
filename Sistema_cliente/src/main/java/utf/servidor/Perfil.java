@@ -1,51 +1,67 @@
 package utf.servidor;
 
+import java.util.UUID;
+
 public class Perfil {
-    // Adicionado o 'nome' exigido no protocolo
+    
     private String nome;
+    private String usuario;
     private String senha;
     private String token;
-    private String nivel;
+    private String nivel; // Define se é "ADMIN" ou "USER"
 
-    // Construtor atualizado
-    public Perfil(String nome, String senha, String token, String nivel) {
+    public Perfil(String nome, String usuario, String senha, String nivel) {
         this.nome = nome;
+        this.usuario = usuario;
         this.senha = senha;
-        this.token = token;
         this.nivel = nivel;
+        this.token = null; // O token começa nulo até a pessoa fazer login
+    }
+    // --- GETTERS E SETTERS BÁSICOS ---
+
+    public String getNome() { 
+        return nome; 
+    }
+    
+    public void setNome(String nome) { 
+        this.nome = nome; 
     }
 
-    // --- GETTERS E SETTERS ---
-
-    public String getNome() {
-        return nome;
+    public String getUsuario() { 
+        return usuario; 
+    }
+    
+    public String getSenha() { 
+        return senha; 
+    }
+    
+    public void setSenha(String senha) { 
+        this.senha = senha; 
     }
 
-    public void setNome(String nome) {
-        this.nome = nome;
+    public String getToken() { 
+        return token; 
     }
-
-    public String getSenha() {
-        return senha;
+    
+    public String getNivel() { 
+        return nivel; 
     }
-
-    public void setSenha(String novaSenha) {
-        this.senha = novaSenha;
-    }
-
-    public String getToken() {
-        return token;
-    }
-
+    
+ // Agora o banco decide qual será o token (adm ou usr_nome)
     public void setToken(String novoToken) {
         this.token = novoToken;
     }
 
-    public String getNivel() {
-        return nivel;
-    }
+    // --- LÓGICA DE SESSÃO ---
 
-    public void setNivel(String nivel) {
-        this.nivel = nivel;
+    // Gera um token único e aleatório quando o usuário acerta a senha no login
+    public void gerarNovoToken() {
+        // Exemplo: cria um token tipo "usr_a1b2c3d4"
+        this.token = "usr_" + UUID.randomUUID().toString().substring(0, 8);
+    }
+    
+    // Limpa o token por segurança (pode ser usado num logout futuro se quiser invalidar)
+    public void limparToken() {
+        this.token = null;
     }
 }

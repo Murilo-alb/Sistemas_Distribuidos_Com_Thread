@@ -2,20 +2,20 @@ package utf.servidor;
 
 import java.io.*;
 import java.net.Socket;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 
-public class TratadorCliente implements Runnable {
+public class TratadorCliente {
     
     private Socket socket;
     private BancoDeDados banco;
     private Consumer<String> logger;
     private Gson gson = new Gson();
 
-    // MAPA GLOBAL: Fundamental para o chat 1-para-1 sem destinatário manual
-    private static ConcurrentHashMap<String, PrintWriter> usuariosOnline = new ConcurrentHashMap<>();
+    private static List<JsonObject> muralDeMensagens = new ArrayList<>();
     private String usuarioLogadoNaSessao = null; 
 
     public TratadorCliente(Socket socket, BancoDeDados banco, Consumer<String> logger) {
@@ -24,182 +24,149 @@ public class TratadorCliente implements Runnable {
         this.logger = logger;
     }
 
-    // Regras do Protocolo
-    private boolean validarUsuario(String u) { return u != null && u.matches("^[a-zA-Z0-9]{5,20}$"); }
-    private boolean validarSenha(String s) { return s != null && s.matches("^[0-9]{6}$"); }
-
-    @Override
-    public void run() {
+    public void processar() {
         try (
             BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"));
             PrintWriter out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), "UTF-8"), true)
         ) {
-            String mensagemRecebida;
-
-            while ((mensagemRecebida = in.readLine()) != null) {
-                logger.accept("-> RECEBEU: " + mensagemRecebida);
-                JsonObject respostaServidor = new JsonObject();
+            String msgRecebida;
+            
+            while ((msgRecebida = in.readLine()) != null) {
+                logger.accept("-> RECEBEU: " + msgRecebida);
+                JsonObject resposta = new JsonObject();
                 
                 try {
-                    JsonObject req = gson.fromJson(mensagemRecebida, JsonObject.class);
+                    JsonObject req = gson.fromJson(msgRecebida, JsonObject.class);
                     if (!req.has("op")) continue;
 
                     String op = req.get("op").getAsString();
 
-                    // --- 1. LOGIN ---
                     if (op.equals("login")) {
                         String u = req.get("usuario").getAsString();
                         String s = req.get("senha").getAsString();
                         Perfil p = banco.fazerLogin(u, s);
-                        
                         if (p != null) {
                             usuarioLogadoNaSessao = u;
-                            usuariosOnline.put(u, out);
-                            respostaServidor.addProperty("resposta", "200");
-                            respostaServidor.addProperty("token", p.getToken());
-                            respostaServidor.addProperty("mensagem", "Login efetuado");
+                            resposta.addProperty("resposta", "200");
+                            resposta.addProperty("token", p.getToken());
+                            resposta.addProperty("mensagem", "Login ok");
                         } else {
-                            respostaServidor.addProperty("resposta", "401");
-                            respostaServidor.addProperty("mensagem", "Usuario ou senha incorretos");
+                            resposta.addProperty("resposta", "401");
+                            resposta.addProperty("mensagem", "Erro no login");
                         }
                     } 
-                    
-                    // --- 2. CADASTRAR ---
                     else if (op.equals("cadastrarUsuario")) {
                         String n = req.get("nome").getAsString();
                         String u = req.get("usuario").getAsString();
                         String s = req.get("senha").getAsString();
-                        
-                        if (!validarUsuario(u) || !validarSenha(s)) {
-                            respostaServidor.addProperty("resposta", "401");
-                            respostaServidor.addProperty("mensagem", "Padrao invalido");
-                        } else if (banco.cadastrarUsuario(n, u, s)) {
-                            respostaServidor.addProperty("resposta", "200");
-                            respostaServidor.addProperty("mensagem", "Cadastrado com sucesso");
+
+                        if (banco.cadastrarUsuario(n, u, s)) {
+                            resposta.addProperty("resposta", "200");
+                            resposta.addProperty("mensagem", "Cadastrado com sucesso");
+                            
+                            // AQUI O TOKEN APARECE PARA O CLIENTE:
+                            resposta.addProperty("token", "usr_" + u); 
                         } else {
-                            respostaServidor.addProperty("resposta", "401");
-                            respostaServidor.addProperty("mensagem", "Erro: Login ja existe");
+                            resposta.addProperty("resposta", "401");
+                            resposta.addProperty("mensagem", "Usuário já existe");
                         }
                     }
-
-                    // --- 3. ENVIAR MENSAGEM (SEM DESTINATÁRIO NO JSON) ---
                     else if (op.equals("enviarMensagem")) {
                         String token = req.get("token").getAsString();
                         String texto = req.get("texto").getAsString();
                         String remetente = banco.buscarUsuarioPorToken(token);
 
                         if (remetente != null) {
-                            String amigoOnline = null;
-                            
-                            // Lógica de Roteamento: Pega qualquer um que NÃO seja quem enviou
-                            for (String loginOnline : usuariosOnline.keySet()) {
-                                if (!loginOnline.equals(remetente)) {
-                                    amigoOnline = loginOnline;
-                                    break;
-                                }
-                            }
+                            JsonObject msgDTO = new JsonObject();
+                            msgDTO.addProperty("remetente", remetente);
+                            msgDTO.addProperty("texto", texto);
+                            muralDeMensagens.add(msgDTO);
 
-                            if (amigoOnline != null) {
-                                PrintWriter outAmigo = usuariosOnline.get(amigoOnline);
-                                
-                                JsonObject msgChat = new JsonObject();
-                                msgChat.addProperty("op", "receberMensagem");
-                                msgChat.addProperty("remetente", remetente);
-                                msgChat.addProperty("texto", texto);
-                                
-                                outAmigo.println(msgChat.toString());
-                                
-                                // Resposta silenciosa para o remetente (não polui o chat dele)
-                                respostaServidor.addProperty("resposta", "200");
-                                respostaServidor.addProperty("mensagem", "Entregue"); 
-                            } else {
-                                respostaServidor.addProperty("resposta", "401");
-                                respostaServidor.addProperty("mensagem", "Aguardando outra pessoa logar...");
-                            }
+                            resposta.addProperty("resposta", "200");
+                            resposta.addProperty("mensagem", "Postado");
+                        } else {
+                            resposta.addProperty("resposta", "401");
                         }
                     }
-
-                    // --- 4. CONSULTAR ---
-                    else if (op.equals("consultarUsuario")) {
+                    else if (op.equals("read")) {
                         String token = req.get("token").getAsString();
-                        String dono = banco.buscarUsuarioPorToken(token);
-                        if (dono != null) {
-                            Perfil p = banco.buscarPerfil(dono);
-                            respostaServidor.addProperty("resposta", "200");
-                            respostaServidor.addProperty("nome", p.getNome());
-                            respostaServidor.addProperty("usuario", dono);
-                            respostaServidor.addProperty(token, p.getToken());
+                        if (banco.buscarUsuarioPorToken(token) != null) {
+                            resposta.addProperty("resposta", "200");
+                            resposta.addProperty("tipo", "mural");
+                            resposta.add("lista", gson.toJsonTree(muralDeMensagens));
+                        } else {
+                            resposta.addProperty("resposta", "401");
                         }
                     }
-
-                    // --- 5. ATUALIZAR ---
-                    else if (op.equals("atualizarUsuario")) {
-                        String token = req.get("token").getAsString();
-                        String n = req.get("nome").getAsString();
-                        String s = req.get("senha").getAsString();
-                        String dono = banco.buscarUsuarioPorToken(token);
-                        if (dono != null && validarSenha(s)) {
-                            banco.atualizarUsuario(dono, n, s);
-                            respostaServidor.addProperty("resposta", "200");
-                            respostaServidor.addProperty("mensagem", "Dados atualizados");
-                        }
-                    }
-
-                    // --- 6. DELETAR (Com Regra Admin) ---
+                 // --- OPERAÇÃO: DELETAR UTILIZADOR (ADMIN OU AUTO) ---
                     else if (op.equals("deletarUsuario")) {
                         String token = req.get("token").getAsString();
-                        String dono = banco.buscarUsuarioPorToken(token);
-                        if (dono != null) {
-                            // Se houver usuarioAlvo no JSON, é o Admin deletando outro
+                        String donoDoToken = banco.buscarUsuarioPorToken(token);
+                        
+                        if (donoDoToken != null) {
+                            Perfil pDono = banco.buscarPerfil(donoDoToken);
+                            
+                            // Caso 1: O Admin quer apagar outra pessoa
                             if (req.has("usuarioAlvo")) {
                                 String alvo = req.get("usuarioAlvo").getAsString();
-                                if (banco.buscarPerfil(dono).getNivel().equals("ADMIN")) {
+                                
+                                if (pDono.getNivel().equals("ADMIN")) {
                                     if (banco.apagarUsuario(alvo)) {
-                                        usuariosOnline.remove(alvo);
-                                        respostaServidor.addProperty("resposta", "200");
-                                        respostaServidor.addProperty("mensagem", "Deletado pelo Admin");
+                                        resposta.addProperty("resposta", "200");
+                                        resposta.addProperty("mensagem", "Utilizador [" + alvo + "] removido pelo Admin.");
+                                    } else {
+                                        resposta.addProperty("resposta", "401");
+                                        resposta.addProperty("mensagem", "Erro: Alvo inexistente ou protegido.");
                                     }
-                                }
-                            } else {
-                                // Auto-deleção
-                                if (banco.apagarUsuario(dono)) {
-                                    usuariosOnline.remove(dono);
-                                    usuarioLogadoNaSessao = null;
-                                    respostaServidor.addProperty("resposta", "200");
                                 } else {
-                                    respostaServidor.addProperty("resposta", "401");
-                                    respostaServidor.addProperty("mensagem", "Admin nao pode ser deletado");
+                                    resposta.addProperty("resposta", "401");
+                                    resposta.addProperty("mensagem", "Acesso Negado: Apenas administradores.");
+                                }
+                            } 
+                            // Caso 2: O utilizador quer apagar a sua própria conta
+                            else {
+                                if (banco.apagarUsuario(donoDoToken)) {
+                                    resposta.addProperty("resposta", "200");
+                                    resposta.addProperty("mensagem", "Deslogado"); // Sinal para o cliente fechar
+                                    
+                                    // Envia a resposta final antes de quebrar o loop
+                                    out.println(resposta.toString());
+                                    logger.accept("<- ENVIOU: " + resposta.toString());
+                                    break; 
+                                } else {
+                                    resposta.addProperty("resposta", "401");
+                                    resposta.addProperty("mensagem", "O Admin principal nao pode ser removido.");
                                 }
                             }
                         }
                     }
-
-                    // --- 7. LOGOUT ---
                     else if (op.equals("logout")) {
-                        if (usuarioLogadoNaSessao != null) {
-                            usuariosOnline.remove(usuarioLogadoNaSessao);
-                            usuarioLogadoNaSessao = null;
-                            respostaServidor.addProperty("resposta", "200");
-                        }
+                        usuarioLogadoNaSessao = null;
+                        resposta.addProperty("resposta", "200");
+                        resposta.addProperty("mensagem", "Deslogado");
+                        
+                        out.println(resposta.toString());
+                        logger.accept("<- ENVIOU: " + resposta.toString());
+                        break; 
+                    }
+                    // --- TRAVA DE SEGURANÇA ---
+                    else {
+                        resposta.addProperty("resposta", "400");
+                        resposta.addProperty("mensagem", "Operação desconhecida. Evitando travamento.");
                     }
 
                 } catch (Exception e) {
-                    respostaServidor.addProperty("resposta", "401");
-                    respostaServidor.addProperty("mensagem", "Erro no processamento");
+                    resposta.addProperty("resposta", "401");
+                    resposta.addProperty("mensagem", "Erro JSON");
                 }
                 
-                // Envia a resposta final da operação
-                if (respostaServidor.has("resposta")) {
-                    out.println(respostaServidor.toString());
-                    logger.accept("<- ENVIOU: " + respostaServidor.toString());
+                if (resposta.has("resposta") && (!resposta.has("mensagem") || !resposta.get("mensagem").getAsString().equals("Deslogado"))) {
+                    out.println(resposta.toString());
+                    logger.accept("<- ENVIOU: " + resposta.toString());
                 }
             }
         } catch (IOException e) {
-            logger.accept("Conexão encerrada.");
-        } finally {
-            if (usuarioLogadoNaSessao != null) {
-                usuariosOnline.remove(usuarioLogadoNaSessao);
-            }
+            logger.accept("Conexão com cliente encerrada ou rompida.");
         }
     }
 }
