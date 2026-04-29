@@ -10,16 +10,40 @@ public class BancoDeDados {
     private Map<String, Perfil> usuarios = new HashMap<>();
 
     public BancoDeDados() {
-        // Contas pré-cadastradas para você não perder tempo digitando na apresentação
+        // Conta pré-cadastrada (admin). 
+        // Nota: A senha tem 6 dígitos para respeitar a própria regra do sistema!
         usuarios.put("admin", new Perfil("Administrador", "admin", "123456", "ADMIN"));
+    }
+
+    // --- MÉTODOS DE VALIDAÇÃO PRIVADOS ---
+    private boolean isUsuarioValido(String usuario) {
+        // Regra: Letras e números concatenados, sem espaços/especiais, entre 5 a 20 caracteres
+        return usuario != null && usuario.matches("^[a-zA-Z0-9]{5,20}$");
+    }
+
+    private boolean isSenhaValida(String senha) {
+        // Regra: Apenas números, exatamente 6 dígitos
+        return senha != null && senha.matches("^[0-9]{6}$");
     }
 
     // --- MÉTODOS DO CRUD (Sem o 'synchronized' porque não tem concorrência) ---
 
     public boolean cadastrarUsuario(String nome, String usuario, String senha) {
+        // 1. Verifica se os campos não estão vazios
+        if (nome == null || nome.trim().isEmpty() || usuario == null || senha == null) {
+            return false;
+        }
+        
+        // 2. Valida as regras restritas do Protocolo
+        if (!isUsuarioValido(usuario) || !isSenhaValida(senha)) {
+            return false; 
+        }
+
+        // 3. Verifica se o usuário já existe
         if (usuarios.containsKey(usuario)) {
             return false; 
         }
+
         Perfil novo = new Perfil(nome, usuario, senha, "USER");
         
         // REGRA DO TOKEN NO CADASTRO:
@@ -28,6 +52,7 @@ public class BancoDeDados {
         usuarios.put(usuario, novo);
         return true;
     }
+
     public Perfil fazerLogin(String usuario, String senha) {
         Perfil p = usuarios.get(usuario);
         
@@ -42,6 +67,7 @@ public class BancoDeDados {
         }
         return null; 
     }
+
     public String buscarUsuarioPorToken(String token) {
         if (token == null || token.isEmpty()) return null;
         
@@ -57,12 +83,21 @@ public class BancoDeDados {
         return usuarios.get(usuario);
     }
 
-    public void atualizarUsuario(String usuario, String novoNome, String novaSenha) {
+    // Alterado para retornar boolean para o Servidor saber se as regras foram respeitadas
+    public boolean atualizarUsuario(String usuario, String novoNome, String novaSenha) {
         Perfil p = usuarios.get(usuario);
+        
         if (p != null) {
+            // Verifica regras de nome vazio e senha de 6 dígitos numéricos
+            if (novoNome == null || novoNome.trim().isEmpty() || !isSenhaValida(novaSenha)) {
+                return false; 
+            }
+            
             p.setNome(novoNome);
             p.setSenha(novaSenha);
+            return true;
         }
+        return false;
     }
 
     public boolean apagarUsuario(String loginAlvo) {

@@ -41,6 +41,10 @@ public class TratadorCliente {
 
                     String op = req.get("op").getAsString();
 
+                    // ==========================================
+                    //  OPERAÇÕES DE AUTENTICAÇÃO E USUÁRIO
+                    // ==========================================
+                    
                     if (op.equals("login")) {
                         String u = req.get("usuario").getAsString();
                         String s = req.get("senha").getAsString();
@@ -49,12 +53,19 @@ public class TratadorCliente {
                             usuarioLogadoNaSessao = u;
                             resposta.addProperty("resposta", "200");
                             resposta.addProperty("token", p.getToken());
-                            resposta.addProperty("mensagem", "Login ok");
                         } else {
                             resposta.addProperty("resposta", "401");
-                            resposta.addProperty("mensagem", "Erro no login");
+                            resposta.addProperty("mensagem", "Usuário ou senha inválidos");
                         }
                     } 
+                    else if (op.equals("logout")) {
+                        usuarioLogadoNaSessao = null;
+                        resposta.addProperty("resposta", "200");
+                        resposta.addProperty("mensagem", "logout efetuado");
+                        out.println(resposta.toString());
+                        logger.accept("<- ENVIOU: " + resposta.toString());
+                        break; 
+                    }
                     else if (op.equals("cadastrarUsuario")) {
                         String n = req.get("nome").getAsString();
                         String u = req.get("usuario").getAsString();
@@ -63,42 +74,45 @@ public class TratadorCliente {
                         if (banco.cadastrarUsuario(n, u, s)) {
                             resposta.addProperty("resposta", "200");
                             resposta.addProperty("mensagem", "Cadastrado com sucesso");
-                            
-                            // AQUI O TOKEN APARECE PARA O CLIENTE:
                             resposta.addProperty("token", "usr_" + u); 
                         } else {
                             resposta.addProperty("resposta", "401");
-                            resposta.addProperty("mensagem", "Usuário já existe");
+                            resposta.addProperty("mensagem", "Mensagem do erro"); 
                         }
                     }
-                    else if (op.equals("enviarMensagem")) {
+                    else if (op.equals("consultarUsuario")) {
                         String token = req.get("token").getAsString();
-                        String texto = req.get("texto").getAsString();
-                        String remetente = banco.buscarUsuarioPorToken(token);
+                        String donoDoToken = banco.buscarUsuarioPorToken(token);
 
-                        if (remetente != null) {
-                            JsonObject msgDTO = new JsonObject();
-                            msgDTO.addProperty("remetente", remetente);
-                            msgDTO.addProperty("texto", texto);
-                            muralDeMensagens.add(msgDTO);
-
+                        if (donoDoToken != null) {
+                            Perfil p = banco.buscarPerfil(donoDoToken);
                             resposta.addProperty("resposta", "200");
-                            resposta.addProperty("mensagem", "Postado");
+                            resposta.addProperty("nome", p.getNome());
+                            resposta.addProperty("usuario", p.getUsuario());
                         } else {
                             resposta.addProperty("resposta", "401");
+                            resposta.addProperty("mensagem", "Token inválido");
                         }
                     }
-                    else if (op.equals("read")) {
+                    else if (op.equals("atualizarUsuario")) {
                         String token = req.get("token").getAsString();
-                        if (banco.buscarUsuarioPorToken(token) != null) {
-                            resposta.addProperty("resposta", "200");
-                            resposta.addProperty("tipo", "mural");
-                            resposta.add("lista", gson.toJsonTree(muralDeMensagens));
+                        String n = req.get("nome").getAsString();
+                        String s = req.get("senha").getAsString(); 
+                        String donoDoToken = banco.buscarUsuarioPorToken(token);
+
+                        if (donoDoToken != null) {
+                            if (banco.atualizarUsuario(donoDoToken, n, s)) {
+                                resposta.addProperty("resposta", "200");
+                                resposta.addProperty("mensagem", "Atualizado com sucesso");
+                            } else {
+                                resposta.addProperty("resposta", "401");
+                                resposta.addProperty("mensagem", "Mensagem do erro");
+                            }
                         } else {
                             resposta.addProperty("resposta", "401");
+                            resposta.addProperty("mensagem", "Token inválido");
                         }
                     }
-                 // --- OPERAÇÃO: DELETAR UTILIZADOR (ADMIN OU AUTO) ---
                     else if (op.equals("deletarUsuario")) {
                         String token = req.get("token").getAsString();
                         String donoDoToken = banco.buscarUsuarioPorToken(token);
@@ -106,61 +120,81 @@ public class TratadorCliente {
                         if (donoDoToken != null) {
                             Perfil pDono = banco.buscarPerfil(donoDoToken);
                             
-                            // Caso 1: O Admin quer apagar outra pessoa
-                            if (req.has("usuarioAlvo")) {
+                            if (req.has("usuarioAlvo") && !req.get("usuarioAlvo").getAsString().isEmpty()) {
                                 String alvo = req.get("usuarioAlvo").getAsString();
-                                
-                                if (pDono.getNivel().equals("ADMIN")) {
+                                if (token.equals("adm") || (pDono != null && "ADMIN".equals(pDono.getNivel()))) {
                                     if (banco.apagarUsuario(alvo)) {
                                         resposta.addProperty("resposta", "200");
-                                        resposta.addProperty("mensagem", "Utilizador [" + alvo + "] removido pelo Admin.");
+                                        resposta.addProperty("mensagem", "Deletado com sucesso");
                                     } else {
                                         resposta.addProperty("resposta", "401");
-                                        resposta.addProperty("mensagem", "Erro: Alvo inexistente ou protegido.");
+                                        resposta.addProperty("mensagem", "Mensagem do erro");
                                     }
                                 } else {
                                     resposta.addProperty("resposta", "401");
-                                    resposta.addProperty("mensagem", "Acesso Negado: Apenas administradores.");
+                                    resposta.addProperty("mensagem", "Acesso Negado");
                                 }
                             } 
-                            // Caso 2: O utilizador quer apagar a sua própria conta
                             else {
                                 if (banco.apagarUsuario(donoDoToken)) {
                                     resposta.addProperty("resposta", "200");
-                                    resposta.addProperty("mensagem", "Deslogado"); // Sinal para o cliente fechar
-                                    
-                                    // Envia a resposta final antes de quebrar o loop
+                                    resposta.addProperty("mensagem", "Deletado com sucesso");
                                     out.println(resposta.toString());
                                     logger.accept("<- ENVIOU: " + resposta.toString());
                                     break; 
                                 } else {
                                     resposta.addProperty("resposta", "401");
-                                    resposta.addProperty("mensagem", "O Admin principal nao pode ser removido.");
+                                    resposta.addProperty("mensagem", "Mensagem do erro");
                                 }
                             }
+                        } else {
+                            resposta.addProperty("resposta", "401");
+                            resposta.addProperty("mensagem", "Token inválido");
                         }
                     }
-                    else if (op.equals("logout")) {
-                        usuarioLogadoNaSessao = null;
-                        resposta.addProperty("resposta", "200");
-                        resposta.addProperty("mensagem", "Deslogado");
-                        
-                        out.println(resposta.toString());
-                        logger.accept("<- ENVIOU: " + resposta.toString());
-                        break; 
+
+                    // ==========================================
+                    //  OPERAÇÕES DE MENSAGEM (CHAT) - LIMPO!
+                    // ==========================================
+                    else if (op.equals("enviarMensagem")) {
+                        String token = req.get("token").getAsString();
+                        String mensagemTexto = req.get("mensagem").getAsString(); 
+                        String remetente = banco.buscarUsuarioPorToken(token);
+
+                        if (remetente != null) {
+                            JsonObject msgDTO = new JsonObject();
+                            msgDTO.addProperty("usuario", remetente);
+                            msgDTO.addProperty("mensagem", mensagemTexto); 
+                            muralDeMensagens.add(msgDTO);
+
+                            resposta.addProperty("resposta", "200");
+                            resposta.addProperty("mensagem", "Enviado com sucesso");
+                        } else {
+                            resposta.addProperty("resposta", "401");
+                            resposta.addProperty("mensagem", "Token inválido");
+                        }
                     }
-                    // --- TRAVA DE SEGURANÇA ---
+                    else if (op.equals("receberMensagens")) { 
+                        String token = req.get("token").getAsString();
+                        if (banco.buscarUsuarioPorToken(token) != null) {
+                            resposta.addProperty("resposta", "200");
+                            resposta.add("mensagens", gson.toJsonTree(muralDeMensagens)); 
+                        } else {
+                            resposta.addProperty("resposta", "401");
+                            resposta.addProperty("mensagem", "Token inválido");
+                        }
+                    }
                     else {
                         resposta.addProperty("resposta", "400");
-                        resposta.addProperty("mensagem", "Operação desconhecida. Evitando travamento.");
+                        resposta.addProperty("mensagem", "Operação não reconhecida");
                     }
 
                 } catch (Exception e) {
                     resposta.addProperty("resposta", "401");
-                    resposta.addProperty("mensagem", "Erro JSON");
+                    resposta.addProperty("mensagem", "Erro de formatação JSON");
                 }
                 
-                if (resposta.has("resposta") && (!resposta.has("mensagem") || !resposta.get("mensagem").getAsString().equals("Deslogado"))) {
+                if (resposta.has("resposta") && (!resposta.has("mensagem") || !resposta.get("mensagem").getAsString().equals("logout efetuado"))) {
                     out.println(resposta.toString());
                     logger.accept("<- ENVIOU: " + resposta.toString());
                 }

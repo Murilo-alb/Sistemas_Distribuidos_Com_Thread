@@ -49,7 +49,7 @@ public class ServidorGUI extends JFrame {
     }
 
     private void iniciarServidor() {
-        int porta;
+        final int porta;
         try {
             porta = Integer.parseInt(txtPorta.getText());
         } catch (NumberFormatException e) {
@@ -62,26 +62,26 @@ public class ServidorGUI extends JFrame {
         btnDesligar.setEnabled(true);
         txtPorta.setEnabled(false);
 
-        // A MÁGICA AQUI: Criamos UMA ÚNICA thread de fundo só para a rede.
-        // Assim a tela não trava, mas a rede continua sendo "um atendente só".
+        log("AVISO: Operando em FILA ESTRITA. Atendimento 100% síncrono.");
+
+        // O laço de rede é isolado em um processo de fundo para não congelar os botões da tela.
+        // O atendimento aos clientes CONTINUA SEM MULTITHREADING (um de cada vez).
         new Thread(() -> {
             try {
                 serverSocket = new ServerSocket(porta);
                 log("SUCESSO: Banco de Dados carregado na RAM.");
-                log("Servidor rodando na porta " + porta + ". Operando em FILA ESTRITA.");
+                log("Servidor rodando na porta " + porta + ".");
 
                 while (rodando) {
                     log("\n[ CAIXA LIVRE ] Aguardando próximo cliente...");
                     
-                    // 1. O "atendente" fica parado aqui esperando alguém entrar
+                    // Fica bloqueado aqui esperando conexão, mas a interface continua livre
                     Socket socketCliente = serverSocket.accept();
                     log("NOVO CLIENTE: " + socketCliente.getInetAddress().getHostAddress() + " conectou.");
                     
-                    // 2. Prepara o atendimento
                     TratadorCliente tratador = new TratadorCliente(socketCliente, banco, this::log);
                     
-                    // 3. ATENDIMENTO BLOQUEANTE (Síncrono)
-                    // Ele entra no processar() e NÃO SAI MAIS até o cliente dar Logout ou fechar!
+                    // ATENDIMENTO BLOQUEANTE: Só sai daqui quando o cliente der logout ou fechar
                     tratador.processar(); 
                     
                     log("Cliente encerrou a conexão. Fila andou!");
@@ -110,6 +110,7 @@ public class ServidorGUI extends JFrame {
     }
 
     public void log(String mensagem) {
+        // Envia o texto de volta para a esteira da interface gráfica de forma segura
         SwingUtilities.invokeLater(() -> {
             areaMonitoramento.append(mensagem + "\n");
             areaMonitoramento.setCaretPosition(areaMonitoramento.getDocument().getLength());

@@ -1,7 +1,5 @@
 package utf.servidor;
 
-import java.util.UUID;
-
 public class Perfil {
     
     private String nome;
@@ -17,6 +15,7 @@ public class Perfil {
         this.nivel = nivel;
         this.token = null; // O token começa nulo até a pessoa fazer login
     }
+
     // --- GETTERS E SETTERS BÁSICOS ---
 
     public String getNome() { 
@@ -47,20 +46,14 @@ public class Perfil {
         return nivel; 
     }
     
- // Agora o banco decide qual será o token (adm ou usr_nome)
+    // O BancoDeDados decide e injeta qual será o token (adm ou usr_nome)
     public void setToken(String novoToken) {
         this.token = novoToken;
     }
 
     // --- LÓGICA DE SESSÃO ---
-
-    // Gera um token único e aleatório quando o usuário acerta a senha no login
-    public void gerarNovoToken() {
-        // Exemplo: cria um token tipo "usr_a1b2c3d4"
-        this.token = "usr_" + UUID.randomUUID().toString().substring(0, 8);
-    }
     
-    // Limpa o token por segurança (pode ser usado num logout futuro se quiser invalidar)
+    // Limpa o token por segurança (usado no logout para invalidar a sessão)
     public void limparToken() {
         this.token = null;
     }
